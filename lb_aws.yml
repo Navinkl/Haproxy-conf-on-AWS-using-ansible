@@ -1,0 +1,109 @@
+- name: "HAPROXY on AWS"
+  hosts: localhost
+  vars_files:
+  - "vars.yml"
+  tasks:
+  - name: "Install boto3"
+    pip:
+       name: "boto3"
+       state: present
+  - name: "Provision webserver"
+    ec2:
+      assign_public_ip: yes
+      aws_access_key: "{{ aws_access_key  }}"
+      aws_secret_key: "{{ aws_secret_key  }}"
+      count: 2
+      image: "ami-068d43a544160b7ef"
+      instance_tags:
+          env: "webserver"
+          name: "webserver_using_ansible"
+      instance_type: "t2.micro"
+      region: "ap-south-1"
+      key_name: "navin1"
+      group_id: "sg-05556d703dbd17cd5"
+      vpc_subnet_id: "subnet-f210199a"
+      wait: yes
+      state: present
+    register: webserver
+  - name: "Provision Haproxy"
+    ec2:
+      assign_public_ip: yes
+      aws_access_key: "{{  aws_access_key  }}"
+      aws_secret_key: "{{  aws_secret_key  }}"
+      count: 1
+      image: "ami-068d43a544160b7ef"
+      instance_tags:
+          env: "haproxy"
+          name: "haproxy_using_ansible"
+      instance_type: "t2.micro"
+      region: "ap-south-1"
+      key_name: "navin1"
+      group_id: "sg-05556d703dbd17cd5"
+      vpc_subnet_id: "subnet-f210199a"
+      wait: yes
+      state: present
+    register: haproxy
+
+  - name: "Add public ip to webserver host group"
+    add_host:
+      hostname: "{{ item.public_ip }}"
+      groupname: webserver
+    loop: "{{ webserver.instances }}"
+
+  - name: "Add public ip to haproxy host group"
+    add_host:
+      hostname: "{{ item.public_ip }}"
+      groupname: haproxy
+    loop: "{{ haproxy.instances }}"
+
+- name: "Configure Webserver"
+  hosts: webserver
+  vars_files:
+  - "webserver_vars.yml"
+  tasks:
+  - name: "Install Apache Webserver"
+    package:
+      name: "httpd"
+      state: present
+  - name: "Install PHP"
+    package:
+      name: "php"
+      state: present
+
+
+  - name: "Copy webpages to document root"
+    copy:
+      dest: "/var/www/html/index.php"
+      src: "index.php"
+
+  - name: "Start Apache service"
+    service:
+       name: "httpd"
+       state: started
+- name: "Configure Haproxy Servers"
+  hosts: haproxy
+  vars_files:
+  - "haproxy_vars.yml"
+  - "webserver_vars.yml"
+  tasks:
+  - name: "Haproxy installation"
+    package:
+       name: "haproxy"
+       state: present
+
+
+  - name: " Haproxy cofiguration"
+    template:
+       dest: "/etc/haproxy/haproxy.cfg"
+       src: "haproxy.cfg.j2"
+    notify: "restart haproxy"
+  - name: "Start Haproxy server"
+    service:
+       name: "haproxy"
+       state: started
+  handlers:
+  - name: "restart haproxy"
+    service:
+      name: "haproxy"
+      state: restarted
+
